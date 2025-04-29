@@ -26,6 +26,7 @@
 
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
+//  2025-04-07: Vulkan: Deep-copy ImGui_ImplVulkan_InitInfo::PipelineRenderingCreateInfo's pColorAttachmentFormats buffer when set, in order to reduce common user-error of specifying a pointer to data that gets out of scope. (#8282)
 //  2025-02-14: *BREAKING CHANGE*: Added uint32_t api_version to ImGui_ImplVulkan_LoadFunctions().
 //  2025-02-13: Vulkan: Added ApiVersion field in ImGui_ImplVulkan_InitInfo. Default to header version if unspecified. Dynamic rendering path loads "vkCmdBeginRendering/vkCmdEndRendering" (without -KHR suffix) on API 1.3. (#8326)
 //  2025-01-09: Vulkan: Added IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE to clarify how many image sampler descriptors are expected to be available in descriptor pool. (#6642)
@@ -53,7 +54,7 @@
 //  2022-10-11: Using 'nullptr' instead of 'NULL' as per our switch to C++11.
 //  2022-10-04: Vulkan: Added experimental ImGui_ImplVulkan_RemoveTexture() for api symmetry. (#914, #5738).
 //  2022-01-20: Vulkan: Added support for ImTextureID as VkDescriptorSet. User need to call ImGui_ImplVulkan_AddTexture(). Building for 32-bit targets requires '#define ImTextureID ImU64'. (#914).
-//  2021-10-15: Vulkan: Call vkCmdSetScissor() at the end of render a full-viewport to reduce likehood of issues with people using VK_DYNAMIC_STATE_SCISSOR in their app without calling vkCmdSetScissor() explicitly every frame.
+//  2021-10-15: Vulkan: Call vkCmdSetScissor() at the end of render a full-viewport to reduce likelihood of issues with people using VK_DYNAMIC_STATE_SCISSOR in their app without calling vkCmdSetScissor() explicitly every frame.
 //  2021-06-29: Reorganized backend to pull data from a single structure to facilitate usage with multiple-contexts (all g_XXXX access changed to bd->XXXX).
 //  2021-03-22: Vulkan: Fix mapped memory validation error when buffer sizes are not multiple of VkPhysicalDeviceLimits::nonCoherentAtomSize.
 //  2021-02-18: Vulkan: Change blending equation to preserve alpha in output buffer.
@@ -1174,6 +1175,16 @@ bool    ImGui_ImplVulkan_Init(ImGui_ImplVulkan_InitInfo* info)
         IM_ASSERT(info->RenderPass != VK_NULL_HANDLE);
 
     bd->VulkanInitInfo = *info;
+#ifdef IMGUI_IMPL_VULKAN_HAS_DYNAMIC_RENDERING
+    ImGui_ImplVulkan_InitInfo* v = &bd->VulkanInitInfo;
+    if (v->PipelineRenderingCreateInfo.pColorAttachmentFormats != NULL)
+    {
+        // Deep copy buffer to reduce error-rate for end user (#8282)
+        VkFormat* formats_copy = (VkFormat*)IM_ALLOC(sizeof(VkFormat) * v->PipelineRenderingCreateInfo.colorAttachmentCount);
+        memcpy(formats_copy, v->PipelineRenderingCreateInfo.pColorAttachmentFormats, sizeof(VkFormat) * v->PipelineRenderingCreateInfo.colorAttachmentCount);
+        v->PipelineRenderingCreateInfo.pColorAttachmentFormats = formats_copy;
+    }
+#endif
 
     ImGui_ImplVulkan_CreateDeviceObjects();
 
@@ -1187,6 +1198,10 @@ void ImGui_ImplVulkan_Shutdown()
     ImGuiIO& io = ImGui::GetIO();
 
     ImGui_ImplVulkan_DestroyDeviceObjects();
+#ifdef IMGUI_IMPL_VULKAN_HAS_DYNAMIC_RENDERING
+    IM_FREE((void*)bd->VulkanInitInfo.PipelineRenderingCreateInfo.pColorAttachmentFormats);
+#endif
+
     io.BackendRendererName = nullptr;
     io.BackendRendererUserData = nullptr;
     io.BackendFlags &= ~ImGuiBackendFlags_RendererHasVtxOffset;
